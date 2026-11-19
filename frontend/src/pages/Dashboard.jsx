@@ -1,33 +1,41 @@
-import { Link, useSearchParams } from 'react-router-dom';
-import { Cloud, Gamepad2, Keyboard, Monitor, Wifi, Hand } from 'lucide-react';
-import { Availability, HostNotice, PlayButton, useGaming, isLive } from '../App';
-import GameArtwork, { gameArt, isSuperTuxKart, gamePresentation } from '../components/GameArtwork';
+import { Link } from 'react-router-dom';
+import { Activity, Check, CircleHelp, Database, Gamepad2, Monitor, Radio, RefreshCw, Server, Wifi } from 'lucide-react';
+import { useGaming, isLive } from '../App';
 
 export default function Dashboard() {
-  const { games, host, session, showGuide, fresh } = useGaming();
-  const [params, setParams] = useSearchParams();
-  const query = params.get('q') || '';
-  const filtered = [...games].sort((a, b) => Number(Boolean(gamePresentation(b).touch)) - Number(Boolean(gamePresentation(a).touch))).filter(game => game.title.toLowerCase().includes(query.toLowerCase()));
-  const featured = games.find(game => game.enabled) || games[0];
-  return <>
-    {!query && featured && <section className="hero" style={{ '--hero-art': `url("${gameArt(featured)}")` }} aria-label="Featured game">
-      <div className="hero-content"><p className="eyebrow"><Cloud size={18}/> STREAM FROM YOUR LIBRARY</p><h1>{isSuperTuxKart(featured) ? <>Small karts.<br/>Big adventures.</> : featured.title}</h1><p className="hero-description">{isSuperTuxKart(featured) ? 'Wild tracks. Familiar faces. One more race.' : featured.description}<br/>Your next game is just a click away.</p><div className="hero-actions"><PlayButton game={featured}/><Link className="button secondary" to={`/games/${featured.id}`}>See game details</Link></div><p className="hero-meta"><Gamepad2 size={17}/>{featured.title}<span>•</span>Play in your browser</p></div>
-      <div className="hero-foot"><span>FEATURED ON ORBIT</span><span className="feature-marker"/></div>
-    </section>}
-    <div className={`content-wrap dashboard-content ${query ? 'search-results' : ''}`}>
-      <HostNotice/>
-      {query && <div className="section-heading"><div><p className="eyebrow">YOUR LIBRARY</p><h1>Results for “{query}”</h1></div><button className="text-button" onClick={() => setParams({})}>Clear search</button></div>}
-      {!query && <section className="featured-rail" aria-label="Discover Orbit">
-        {featured && <Link className="landscape-card" to={`/games/${featured.id}`}><GameArtwork game={featured}/><div className="tile-shade"/><div className="tile-copy"><span className="mini-label">ON YOUR HOST</span><h2>{featured.title}</h2><span className="tile-caption">Explore the game <Gamepad2 size={21}/></span></div></Link>}
-        <button className="editorial-card" onClick={showGuide}><Cloud size={38}/><div><span className="mini-label">NO DOWNLOADS. JUST PLAY.</span><h2>Your machine.<br/>A whole new screen.</h2><span className="tile-caption">See how browser play works</span></div><OrbitLines/></button>
-      </section>}
-      <section className="library-section" id="library" aria-labelledby="library-heading"><div className="section-heading"><h2 id="library-heading">{query ? 'Matching games' : 'Play from your library'} <span className="count">{filtered.length}</span></h2><span className="section-note">Installed on your host</span></div>
-        {filtered.length ? <div className="library-layout"><div className="cover-shelf">{filtered.map(game => <Link to={`/games/${game.id}`} className="cover-card" key={game.id}><div className={`cover-art cover-${game.launchId}`}><GameArtwork game={game} format="cover" loading="lazy"/>{!isSuperTuxKart(game) && <div className="cover-title"><span>{gamePresentation(game).genre}</span><strong>{game.title}</strong></div>}<div className="cover-bottom"><span className="orbit-badge">ORBIT<br/>PLAY</span><span aria-label={gamePresentation(game).touch ? "Touch screen" : gamePresentation(game).controller ? "Keyboard and controller" : "Keyboard and mouse"}>{gamePresentation(game).touch ? <Hand size={20}/> : <Keyboard size={20}/>}
-{gamePresentation(game).controller && <Gamepad2 size={21}/>}</span></div></div><h3>{game.title}</h3><p className={`game-status ${fresh && game.available ? 'ready' : ''}`}><span/>{!fresh ? 'Status unavailable' : !game.enabled ? 'Disabled' : game.available ? 'Ready to play' : host?.reserved ? 'Host reserved' : 'Unavailable'}</p></Link>)}</div>{!query && games.length < 3 && <aside className="library-note"><span className="mini-label">MADE FOR YOUR LIBRARY</span><h2>The games you love.<br/>The host you own.</h2><p>Every game here runs on your Linux machine. Different players can stream different games at the same time.</p><div><Monitor size={19}/>One host<Wifi size={19}/>Your network</div></aside>}</div> : <div className="empty-state panel"><Gamepad2 size={32}/><h2>{query ? 'No games found' : 'Your library is waiting'}</h2><p>{query ? 'Try a different title or clear your search.' : 'Seed the host database to add your first game.'}</p></div>}
-      </section>
-      {session && !query && <section className="recent-section"><div className="section-heading"><h2>{isLive(session) ? 'Jump back in' : 'Last played'}</h2></div><Link className="recent-card" to="/session"><GameArtwork game={session.game} loading="lazy"/><div><span className="mini-label">{isLive(session) ? 'CURRENT SESSION' : 'YOUR RECENT SESSION'}</span><h3>{session.game.title}</h3><p>{isLive(session) ? 'Return to your browser stream' : new Date(session.startedAt).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</p></div><Gamepad2 size={27}/></Link></section>}
-      <div className="host-strip"><Monitor size={25}/><div><strong>Your Linux host</strong><p>{host?.hostAddress || 'Not configured'} · {host?.activeSessions || 0} of {host?.maxSessions || 2} gaming slots in use · Independent streams</p></div><Availability/></div>
-    </div>
-  </>;
+  const { host, games, session, user, fresh, refresh } = useGaming();
+  if (!user?.isAdmin) return <div className="content-wrap host-dashboard"><div className="empty-state panel"><Server size={32}/><h1>Admin access required</h1><p>Only admins can view host details and gaming slots.</p><Link className="button" to={user ? '/' : '/account'}>{user ? 'Back to library' : 'Sign in as admin'}</Link></div></div>;
+  const slots = host?.slots || [];
+  const capacity = host?.maxSessions ?? 0;
+  const active = host?.activeSessions ?? 0;
+  const ready = Boolean(fresh && host?.streaming?.ready);
+  const system = host?.system;
+  return <div className="content-wrap host-dashboard">
+    <div className="dashboard-heading"><div><p className="eyebrow">HOST OVERVIEW</p><h1>Dashboard</h1><p className="subheading">Host health, gaming capacity, and live slot status.</p></div><button className="button secondary" onClick={refresh}><RefreshCw size={17}/>Refresh status</button></div>
+    {!fresh && <div className="notice" role="status"><CircleHelp size={19}/><p>Connection lost. These details may be out of date. Check the backend and refresh.</p></div>}
+    <section className="overview-grid" aria-label="Host summary">
+      <Summary icon={Server} title="Host" value={!fresh ? 'Unreachable' : ready ? 'Online' : 'Needs attention'} detail={host?.hostAddress || 'Not configured'} tone={ready ? 'green' : 'amber'}/>
+      <Summary icon={Gamepad2} title="Gaming slots" value={fresh ? `${active} / ${capacity}` : '—'} detail="Slots in use"/>
+      <Summary icon={Monitor} title="Available slots" value={fresh ? host?.availableSessions ?? 0 : '—'} detail="Ready for a new game"/>
+      <Summary icon={Radio} title="Player connections" value={fresh ? host?.streaming?.connections ?? 0 : '—'} detail="Connected browser streams"/>
+    </section>
+    <section className="dashboard-section" aria-labelledby="slot-heading"><div className="section-heading"><div><h2 id="slot-heading">Gaming slots</h2><p className="dashboard-section-note">Each slot has its own game, screen, audio, and controls.</p></div><span className="refresh-note"><span/>Updates every 3 seconds</span></div>
+      <div className="slot-grid">{slots.map(slot => {
+        const state = !fresh ? 'Unknown' : slot.state === 'occupied' ? 'In use' : slot.state === 'available' ? 'Available' : 'Offline';
+        const tone = !fresh || slot.state === 'offline' ? 'amber' : slot.state === 'occupied' ? 'blue' : 'green';
+        return <article className={`slot-card ${tone}`} key={slot.slot}><div className="slot-top"><div className="slot-number"><Monitor size={20}/><h3>Slot {slot.slot + 1}</h3></div><span className={`dashboard-badge ${tone}`}><span/>{state}</span></div>
+          <div className="slot-game"><p className="mini-label">{slot.gameTitle ? 'RUNNING GAME' : 'GAMING SLOT'}</p><h2>{slot.gameTitle || (slot.streamReady ? 'Choose a game' : 'Stream unavailable')}</h2>{slot.isCurrentDevice && <span className="your-slot">Your session</span>}</div>
+          <dl className="slot-facts"><div><dt>Stream service</dt><dd>{!fresh ? 'Unknown' : slot.streamReady ? 'Ready' : 'Unavailable'}</dd></div><div><dt>Browser connections</dt><dd>{fresh ? slot.connections : '—'}</dd></div>{slot.startedAt && <div><dt>Started</dt><dd>{new Date(slot.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</dd></div>}</dl>
+          {slot.reason && <p className="slot-warning"><CircleHelp size={15}/>{slot.reason}</p>}
+          <div className="slot-action">{slot.isCurrentDevice && isLive(session) ? <Link to="/session">Return to your session</Link> : slot.state === 'available' && fresh ? <Link to="/">Browse games</Link> : <span>{slot.state === 'occupied' ? 'Managed by the player’s browser' : 'Check the host service'}</span>}</div>
+        </article>;
+      })}</div>
+      {!slots.length && <div className="panel empty-state"><Monitor size={30}/><h3>Slot details unavailable</h3><p>Check that the backend is running and refresh the dashboard.</p></div>}
+    </section>
+    <div className="dashboard-detail-grid"><section className="dashboard-panel" aria-labelledby="host-heading"><div className="dashboard-panel-title"><Server size={21}/><h2 id="host-heading">Host details</h2></div><dl className="host-facts"><Fact label="Host name" value={system?.name}/><Fact label="LAN address" value={host?.hostAddress}/><Fact label="Operating system" value={system ? `${system.platform} · ${system.architecture}` : null}/><Fact label="Processor" value={system?.cpuModel}/><Fact label="Logical CPU cores" value={system?.logicalCores}/><Fact label="Installed memory" value={system ? `${(system.memoryBytes / 1024 ** 3).toFixed(1)} GB` : null}/><Fact label="Game library" value={`${games.length} installed titles`}/></dl></section>
+    <section className="dashboard-panel" aria-labelledby="stream-heading"><div className="dashboard-panel-title"><Activity size={21}/><h2 id="stream-heading">Services</h2></div><div className="service-list"><Service icon={Server} title="Backend" description="Express application" ready={fresh}/><Service icon={Database} title="Database" description="SQLite game library and sessions" ready={fresh}/><Service icon={Radio} title="Streaming" description={`${host?.streaming?.engine || 'Selkies'} · ${host?.streaming?.transport || 'WebSockets'}`} ready={ready}/><Service icon={Wifi} title="Website connection" description={window.isSecureContext ? 'Secure browser context' : 'HTTPS required for remote play'} ready={window.isSecureContext}/></div><p className="dashboard-footnote">Service readiness does not confirm received video or audible playback. Check those in your gaming session.</p></section></div>
+  </div>;
 }
-function OrbitLines() { return <div className="orbit-lines" aria-hidden="true"><i/><i/><i/></div>; }
+function Summary({ icon: Icon, title, value, detail, tone }) { return <article className={`summary-card ${tone || ''}`}><div><span>{title}</span><Icon size={20}/></div><strong>{value}</strong><p>{detail}</p></article>; }
+function Fact({ label, value }) { return <div><dt>{label}</dt><dd>{value ?? 'Unavailable'}</dd></div>; }
+function Service({ icon: Icon, title, description, ready }) { return <div className="service-row"><div className="service-icon"><Icon size={19}/></div><div><h3>{title}</h3><p>{description}</p></div><span className={`service-state ${ready ? 'green' : 'amber'}`} aria-label={ready ? 'Available' : 'Needs attention'}>{ready ? <Check size={17}/> : <CircleHelp size={17}/>}</span></div>; }

@@ -1,3 +1,5 @@
+import os from 'node:os';
+
 export const LIVE = ['STARTING', 'READY', 'ACTIVE'];
 export class ApiError extends Error {
   constructor(status, code, message) { super(message); Object.assign(this, { status, code }); }
@@ -8,6 +10,7 @@ export class SessionManager {
     Object.assign(this, { db, config });
     this.runtimes = runtimes || [{ slot: 0, launcher, stream }];
     this.pending = Promise.resolve();
+    this.system = { name: os.hostname(), platform: 'Linux', architecture: os.arch(), cpuModel: os.cpus()[0]?.model || 'Unknown', logicalCores: os.cpus().length, memoryBytes: os.totalmem() };
   }
   serialize(action) {
     const result = this.pending.then(action);
@@ -18,27 +21,28 @@ export class SessionManager {
   async recover() {
     await this.db.session.updateMany({ where: { status: { in: LIVE } }, data: { status: 'FAILED', endedAt: new Date() } });
   }
-  async current(ownerId) {
-    const owner = ownerId === undefined ? {} : { ownerId };
+  async current(ownerId, userId) {
+    const owner = { ...(ownerId === undefined ? {} : { ownerId }), ...(userId === undefined ? {} : { userId }) };
     const live = await this.db.session.findFirst({ where: { ...owner, status: { in: LIVE } }, include: { game: true } });
     return live || this.db.session.findFirst({ where: owner, orderBy: { id: 'desc' }, include: { game: true } });
   }
   present(session) {
     if (!session) return null;
-    const { ownerId, ...safe } = session;
+    const { ownerId, userId, ...safe } = session;
     return { ...safe, hostAddress: this.config.hostAddress, streamingStatus: 'UNVERIFIED', browserPlayerUrl: this.runtimeFor(session)?.stream?.viewer(session) || null };
   }
   async hostStatus(ownerId) {
     const [games, sessions, streams] = await Promise.all([
       this.db.game.findMany({ where: { enabled: true } }),
-      this.db.session.findMany({ where: { status: { in: LIVE } } }),
+      this.db.session.findMany({ where: { status: { in: LIVE } }, include: { game: { select: { title: true } } } }),
       Promise.all(this.runtimes.map(async runtime => ({ slot: runtime.slot, ...(await runtime.stream?.status() || { ready: false, reason: 'Streaming service is not configured.' }) }))),
     ]);
     const free = streams.filter(stream => stream.ready && !sessions.some(session => session.slot === stream.slot));
-    const launchers = await Promise.all(games.map(async game => {
+    const readiness = await this.runtimes[0].launcher.readinessMany(games.map(game => game.launchId));
+    const launchers = games.map((game, index) => {
       if (sessions.some(session => session.gameId === game.id)) return { gameId: game.id, ready: false, reason: 'This game is already being played. Choose another title.' };
-      return { gameId: game.id, ...await this.runtimes[0].launcher.readiness(game.launchId) };
-    }));
+      return { gameId: game.id, ...readiness[index] };
+    });
     const own = sessions.find(session => session.ownerId === ownerId);
     const selected = streams.find(stream => stream.slot === own?.slot) || free[0] || streams.find(stream => stream.ready) || streams[0];
     return {
@@ -47,10 +51,20 @@ export class SessionManager {
       available: free.length > 0 && launchers.some(launcher => launcher.ready),
       streaming: { engine: 'Selkies', ready: Boolean(selected?.ready), transport: 'websockets',
         connections: streams.reduce((total, stream) => total + (stream.connections || 0), 0), reason: selected?.reason || null },
+      system: this.system,
+      slots: streams.map(stream => {
+        const session = sessions.find(row => row.slot === stream.slot);
+        return { slot: stream.slot, state: session ? 'occupied' : stream.ready ? 'available' : 'offline',
+          streamReady: Boolean(stream.ready), connections: stream.connections || 0,
+          gameTitle: session?.game?.title || null, sessionStatus: session?.status || null,
+          startedAt: session?.startedAt || null, isCurrentDevice: Boolean(session && session.ownerId === ownerId),
+          reason: stream.reason || null };
+      }),
       hostAddress: this.config.hostAddress, streamingStatus: 'UNVERIFIED',
     };
   }
-  start(gameId, ownerId = 'internal-device') { return this.serialize(async () => {
+  start(gameId, ownerId = 'internal-device', userId = null, authorize = null) { return this.serialize(async () => {
+    await authorize?.();
     const game = await this.db.game.findUnique({ where: { id: gameId } });
     if (!game) throw new ApiError(404, 'GAME_NOT_FOUND', 'Game not found.');
     if (!game.enabled) throw new ApiError(409, 'GAME_DISABLED', 'This game is disabled.');
@@ -76,7 +90,7 @@ export class SessionManager {
       session = await this.db.$transaction(async tx => {
         const active = await tx.session.findMany({ where: { status: { in: LIVE } } });
         if (active.some(row => row.ownerId === ownerId || row.gameId === gameId || row.slot === runtime.slot)) throw new ApiError(409, 'HOST_BUSY', 'The requested game or slot was just reserved. Please retry.');
-        return tx.session.create({ data: { gameId, ownerId, slot: runtime.slot, status: 'STARTING' } });
+        return tx.session.create({ data: { gameId, ownerId, userId, slot: runtime.slot, status: 'STARTING' } });
       });
     } catch (error) {
       if (error.code === 'P2002' || error.code === 'P2034') throw new ApiError(409, 'HOST_BUSY', 'The game or slot was just reserved. Please retry.');
@@ -90,7 +104,7 @@ export class SessionManager {
           if (row && LIVE.includes(row.status)) {
             await runtime.stream.closeSession(row.id);
             await runtime.launcher.stop();
-            await this.db.session.update({ where: { id: row.id }, data: { status: code === 0 ? 'ENDED' : 'FAILED', endedAt: new Date() } });
+            await this.finish(row, code === 0 ? 'ENDED' : 'FAILED');
           }
         }).catch(error => console.error('Exit cleanup failed; slot stays reserved:', error.message));
       }, runtime.gameEnvironment?.() || runtime.stream.gameEnvironment());
@@ -103,19 +117,24 @@ export class SessionManager {
       throw new ApiError(503, 'LAUNCH_FAILED', 'The game could not start. Check the backend logs and retry.');
     }
   }); }
+  finish(session, status) {
+    const endedAt = new Date();
+    const durationSeconds = status === 'ENDED' ? Math.max(0, Math.floor((endedAt - session.startedAt) / 1000)) : 0;
+    return this.db.session.update({ where: { id: session.id }, data: { status, endedAt, durationSeconds }, include: { game: true } });
+  }
   async stopSession(session) {
     const runtime = this.runtimeFor(session);
     if (!runtime) throw new ApiError(503, 'CLEANUP_FAILED', 'The owned gaming slot is unavailable. Restart the backend for recovery.');
     try { await runtime.stream?.closeSession(session.id); await runtime.launcher.stop(); }
     catch { throw new ApiError(503, 'CLEANUP_FAILED', 'Game termination could not be confirmed. Your slot remains reserved; retry End Session.'); }
-    return this.db.session.update({ where: { id: session.id }, data: { status: 'ENDED', endedAt: new Date() }, include: { game: true } });
+    return this.finish(session, 'ENDED');
   }
-  end(ownerId) { return this.serialize(async () => {
-    const session = await this.db.session.findFirst({ where: { ...(ownerId === undefined ? {} : { ownerId }), status: { in: LIVE } } });
-    return session ? this.stopSession(session) : this.current(ownerId);
+  end(ownerId, userId) { return this.serialize(async () => {
+    const session = await this.db.session.findFirst({ where: { ...(ownerId === undefined ? {} : { ownerId }), ...(userId === undefined ? {} : { userId }), status: { in: LIVE } } });
+    return session ? this.stopSession(session) : this.current(ownerId, userId);
   }); }
-  reconnect(ownerId) { return this.serialize(async () => {
-    const session = await this.current(ownerId);
+  reconnect(ownerId, userId) { return this.serialize(async () => {
+    const session = await this.current(ownerId, userId);
     if (!session || !['READY', 'ACTIVE'].includes(session.status)) throw new ApiError(409, 'NO_SESSION', 'No prepared session to reconnect.');
     await this.runtimeFor(session).stream.closeSession(session.id);
   }); }

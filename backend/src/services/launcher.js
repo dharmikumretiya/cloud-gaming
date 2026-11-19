@@ -19,16 +19,26 @@ export function approvedGameDefinitions(profileRoot = gameRoot) { return Object.
 }); }
 export const approvedGames = approvedGameDefinitions();
 
-async function processes() {
-  const entries = await readdir('/proc');
-  const result = await Promise.all(entries.filter(x => /^\d+$/.test(x)).map(async pid => {
-    try {
-      const stat = await readFile(`/proc/${pid}/stat`, 'utf8');
-      const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-      return { pid: Number(pid), state: fields[0], group: Number(fields[2]) };
-    } catch { return null; }
-  }));
-  return result.filter(Boolean);
+async function processes({ executables = false } = {}) {
+  const entries = (await readdir('/proc')).filter(pid => /^\d+$/.test(pid));
+  const result = [];
+  // Bound filesystem work so a library refresh cannot flood libuv's worker pool
+  // and delay the WebSocket proxy sharing this Node process.
+  for (let offset = 0; offset < entries.length; offset += 16) {
+    const batch = await Promise.all(entries.slice(offset, offset + 16).map(async pid => {
+      try {
+        const stat = await readFile(`/proc/${pid}/stat`, 'utf8');
+        const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+        let executable = null;
+        if (executables) {
+          try { executable = await readlink(`/proc/${pid}/exe`); } catch { /* An inaccessible process is never ours. */ }
+        }
+        return { pid: Number(pid), state: fields[0], group: Number(fields[2]), executable };
+      } catch { return null; }
+    }));
+    result.push(...batch.filter(Boolean));
+  }
+  return result;
 }
 
 export async function processGroupAlive(group) {
@@ -37,22 +47,42 @@ export async function processGroupAlive(group) {
 }
 
 export class Launcher {
-  constructor(definitions = approvedGames, { startupMs = 650, stopMs = 2000 } = {}) {
+  constructor(definitions = approvedGames, { startupMs = 650, stopMs = 2000, scanProcesses = processes } = {}) {
     this.definitions = definitions;
     this.startupMs = startupMs;
     this.stopMs = stopMs;
     this.owned = null;
+    this.scanProcesses = scanProcesses;
+    this.inventory = null;
+    this.inventoryTask = null;
   }
-  async readiness(launchId) {
+  invalidateInventory() { this.inventory = null; this.inventoryTask = null; }
+  async readinessMany(launchIds) {
+    // Cache only the expensive OS inventory, never reservations or ownership
+    // decisions. Each device still receives its own freshly queried session.
+    let inventory = this.inventory?.expires > Date.now() ? this.inventory.value : null;
+    if (!inventory) {
+      if (!this.inventoryTask) {
+        const task = this.scanProcesses({ executables: true });
+        this.inventoryTask = task;
+        task.then(value => {
+          if (this.inventoryTask === task) this.inventory = { value, expires: Date.now() + 1000 };
+        }).finally(() => { if (this.inventoryTask === task) this.inventoryTask = null; }).catch(() => {});
+      }
+      inventory = await this.inventoryTask;
+    }
+    return Promise.all(launchIds.map(launchId => this.readiness(launchId, inventory)));
+  }
+  async readiness(launchId, inventory = null) {
     const definition = this.definitions[launchId];
     if (!definition) return { ready: false, reason: 'Game has no approved launcher.' };
     try { await access(definition.executable, constants.X_OK); }
     catch { return { ready: false, reason: 'Approved game executable is not installed or executable.' }; }
     // Do not adopt or kill an existing game after losing ownership on restart.
-    for (const proc of await processes()) {
+    for (const proc of inventory || await this.scanProcesses({ executables: true })) {
       if (proc.state === 'Z' || proc.group === this.owned?.group) continue;
       try {
-        if (await readlink(`/proc/${proc.pid}/exe`) === definition.executable) {
+        if (proc.executable === definition.executable) {
           return { ready: false, reason: 'Game is already running outside this application. Close it manually first.' };
         }
       } catch { /* Other users' inaccessible processes are not ours. */ }
@@ -65,6 +95,7 @@ export class Launcher {
   }
   async launch(launchId, onExit, environment = {}) {
     if (this.owned) throw new Error('An owned game still needs cleanup');
+    this.invalidateInventory();
     const definition = this.definitions[launchId];
     if (!definition) throw new Error('Unapproved launcher');
     const child = spawn(definition.executable, definition.args, {
@@ -74,6 +105,7 @@ export class Launcher {
     this.owned = owned;
     child.stderr.on('data', chunk => { owned.output = (owned.output + chunk.toString()).slice(-2000); });
     child.once('exit', (code, signal) => {
+      this.invalidateInventory();
       owned.exited = true;
       owned.code = code;
       owned.signal = signal;
@@ -105,5 +137,6 @@ export class Launcher {
     }
     if (await this.groupAlive()) throw new Error('Could not confirm game termination; host remains reserved.');
     if (this.owned === owned) this.owned = null;
+    this.invalidateInventory();
   }
 }

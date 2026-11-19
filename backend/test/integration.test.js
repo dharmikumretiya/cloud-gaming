@@ -19,7 +19,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { once } from 'node:events';
 import { LIVE, SessionManager } from '../src/services/sessions.js';
 
-const migration = (await readFile(new URL('../prisma/migrations/202611190001_initial/migration.sql', import.meta.url), 'utf8')) + (await readFile(new URL('../prisma/migrations/202611190002_multi_session/migration.sql', import.meta.url), 'utf8'));
+const migration = (await readFile(new URL('../prisma/migrations/202611190001_initial/migration.sql', import.meta.url), 'utf8')) + (await readFile(new URL('../prisma/migrations/202611190002_multi_session/migration.sql', import.meta.url), 'utf8')) + (await readFile(new URL('../prisma/migrations/202611190003_accounts/migration.sql', import.meta.url), 'utf8')) + (await readFile(new URL('../prisma/migrations/202611200001_admin_access/migration.sql', import.meta.url), 'utf8'));
 const config = loadConfig({ MAX_SESSIONS: '1' });
 function readyStream() {
   return { running: true, origin: 'http://127.0.0.1:1',
@@ -56,7 +56,10 @@ test('library, health, host and initial session use real SQLite', async t => {
   assert.equal(games.body.games[0].title, 'Test game');
   assert.equal(games.body.games[0].available, true);
   assert.equal((await get('/api/session')).body.session, null);
-  assert.equal((await get('/api/host/status')).body.streamingStatus, 'UNVERIFIED');
+  const host = (await get('/api/host/status')).body;
+  assert.equal(host.streamingStatus, 'UNVERIFIED');
+  assert.equal(host.system, undefined);
+  assert.equal(host.slots, undefined);
   assert.equal((await get('/api/unknown')).status, 404);
 });
 
@@ -412,6 +415,14 @@ test('two devices concurrently launch different games, a third cannot exceed cap
   assert.equal(status.maxSessions, 2);
   assert.equal(status.availableSessions, 0);
   assert.equal(status.available, false);
+  const details = await manager.hostStatus();
+  assert.equal(status.slots, undefined);
+  assert.equal(details.slots.length, 2);
+  assert.ok(details.slots.every(slot => slot.state === 'occupied'));
+  assert.deepEqual(details.slots.map(slot => slot.gameTitle), games.slice(0, 2).map(game => game.title));
+  assert.ok(details.slots.every(slot => !('ownerId' in slot) && !('sessionId' in slot)));
+  const ownStatus = await manager.hostStatus((await manager.current()).ownerId);
+  assert.equal(ownStatus.slots.filter(slot => slot.isCurrentDevice).length, 1);
   assert.equal(manager.runtimes.every(runtime => runtime.launcher.owned), true);
 });
 
@@ -576,4 +587,207 @@ test('two WebSocket streams route to their own runtime and reconnect/end cannot 
   assert.equal(wsB.readyState, WebSocket.OPEN);
   const bReply = once(wsB, 'message'); wsB.send('still-playing'); assert.equal((await bReply)[0].toString(), 'slot-1:still-playing');
   assert.equal((await b.get('/api/session')).body.session.status, 'READY');
+});
+
+test('concurrent host polling shares process scans but launch validation stays fresh', async t => {
+  const { manager, launcher, db, game } = await fixture(t);
+  await db.game.create({ data: { title: 'Another approved title', launchId: 'test' } });
+  let scans = 0, external = false;
+  launcher.scanProcesses = async () => {
+    scans++; await delay(15);
+    return external ? [{ pid: 999999, group: 999999, state: 'S', executable: '/usr/bin/sleep' }] : [];
+  };
+  await Promise.all(Array.from({ length: 8 }, () => manager.hostStatus('test-player')));
+  assert.equal(scans, 1, 'Concurrent library/status requests must share one process inventory');
+  external = true;
+  await assert.rejects(manager.start(game.id), /already running outside/);
+  assert.equal(scans, 2, 'Play must bypass the status cache and check actual process ownership');
+  assert.equal(await db.session.count(), 0);
+});
+
+function accountClient(f, device = 'a') {
+  let cookie = `orbit_device=${device.repeat(64)}`;
+  const get = url => f.api.get(url).set('Host', '127.0.0.1:3001').set('Cookie', cookie);
+  const post = async (url, body = {}) => {
+    const response = await f.api.post(url).set('Host', '127.0.0.1:3001').set('Cookie', cookie).send(body);
+    const login = response.headers['set-cookie']?.find(value => value.startsWith('orbit_login='));
+    if (login) cookie = `orbit_device=${device.repeat(64)}; ${login.split(';')[0]}`;
+    return response;
+  };
+  return { get, post, cookie: () => cookie };
+}
+const signup = (client, username = 'player_one') => client.post('/api/auth/register', { username, displayName: 'Player One', password: 'a-test-password-123' });
+
+test('accounts normalize usernames, hash passwords, issue private cookies, and rotate login tokens', async t => {
+  const f = await fixture(t), client = accountClient(f);
+  const registered = await signup(client, 'Player_One');
+  assert.equal(registered.status, 201);
+  assert.equal(registered.body.user.username, 'player_one');
+  assert.equal(registered.body.user.passwordHash, undefined);
+  const cookie = registered.headers['set-cookie'].find(value => value.startsWith('orbit_login='));
+  assert.match(cookie, /HttpOnly/); assert.match(cookie, /SameSite=Strict/);
+  const record = await f.db.user.findUnique({ where: { username: 'player_one' } });
+  assert.match(record.passwordHash, /^scrypt-v1\$/);
+  assert.ok(!record.passwordHash.includes('a-test-password-123'));
+  const stored = await f.db.authSession.findFirst();
+  assert.ok(!cookie.includes(stored.tokenHash));
+  assert.equal((await client.get('/api/auth/me')).body.user.id, record.id);
+  assert.equal((await signup(client, 'PLAYER_ONE')).status, 409);
+  assert.equal((await client.post('/api/auth/login', { username: 'player_one', password: 'wrong-password' })).status, 401);
+  const oldCookie = client.cookie();
+  assert.equal((await client.post('/api/auth/login', { username: 'PLAYER_ONE', password: 'a-test-password-123' })).status, 200);
+  const stale = await f.api.get('/api/auth/me').set('Host', '127.0.0.1:3001').set('Cookie', oldCookie);
+  assert.equal(stale.body.user, null);
+  assert.equal(await f.db.authSession.count(), 1);
+});
+
+test('per-user history survives login on another device and never claims guest or other account history', async t => {
+  const f = await fixture(t), first = accountClient(f), second = accountClient(f, 'b');
+  await f.post('/api/session/start', { gameId: f.game.id }); await f.post('/api/session/end');
+  assert.equal((await signup(first)).status, 201);
+  assert.equal((await first.get('/api/history')).body.total, 0);
+  const start = await first.post('/api/session/start', { gameId: f.game.id });
+  assert.equal(start.status, 201);
+  assert.equal(start.body.session.userId, undefined);
+  await f.db.session.update({ where: { id: start.body.session.id }, data: { startedAt: new Date(Date.now() - 125000) } });
+  await first.post('/api/session/end');
+  const history = (await first.get('/api/history')).body;
+  assert.equal(history.total, 1); assert.equal(history.summary.games, 1);
+  assert.ok(history.summary.durationSeconds >= 125 && history.summary.durationSeconds < 130);
+  assert.equal(history.sessions[0].ownerId, undefined);
+  assert.equal((await signup(second, 'other_player')).status, 201);
+  assert.equal((await second.get('/api/history')).body.total, 0);
+  await second.post('/api/auth/logout');
+  assert.equal((await second.post('/api/auth/login', { username: 'player_one', password: 'a-test-password-123' })).status, 200);
+  assert.equal((await second.get('/api/history')).body.sessions[0].id, start.body.session.id);
+  assert.equal((await second.get('/api/session')).body.session, null, 'Account history must not transfer stream ownership');
+  assert.equal((await second.get('/api/history?page=0')).status, 400);
+  assert.equal((await f.get('/api/history')).status, 401);
+});
+
+test('logout stops the owned game, revokes credentials, and hides old history on a shared browser', async t => {
+  const f = await fixture(t), client = accountClient(f);
+  await signup(client);
+  await client.post('/api/session/start', { gameId: f.game.id });
+  const oldCookie = client.cookie();
+  assert.equal((await client.post('/api/auth/logout')).status, 200);
+  assert.equal(await f.launcher.groupAlive(), false);
+  assert.equal((await client.get('/api/auth/me')).body.user, null);
+  assert.equal((await client.get('/api/session')).body.session, null);
+  assert.equal((await client.get('/api/history')).status, 401);
+  assert.equal((await f.api.get('/api/auth/me').set('Host', '127.0.0.1:3001').set('Cookie', oldCookie)).body.user, null);
+  await signup(client, 'next_player');
+  assert.equal((await client.get('/api/history')).body.total, 0);
+});
+
+test('expired login cannot expose a game, and failed logout cleanup preserves access for retry', async t => {
+  const f = await fixture(t), client = accountClient(f);
+  await signup(client); await client.post('/api/session/start', { gameId: f.game.id });
+  const stop = f.launcher.stop.bind(f.launcher);
+  f.launcher.stop = async () => { throw Error('controlled cleanup failure'); };
+  const failed = await client.post('/api/auth/logout');
+  f.launcher.stop = stop;
+  assert.equal(failed.status, 503);
+  assert.ok((await client.get('/api/auth/me')).body.user);
+  f.launcher.stop = stop;
+  await f.db.authSession.updateMany({ data: { expiresAt: new Date(0) } });
+  assert.equal((await client.get('/api/auth/me')).body.user, null);
+  assert.equal((await client.get('/api/history')).status, 401);
+  assert.equal((await client.get('/api/session')).body.session, null);
+  assert.equal((await client.post('/api/auth/login', { username: 'player_one', password: 'a-test-password-123' })).status, 200);
+  assert.equal((await client.get('/api/session')).body.session.status, 'READY');
+  await client.post('/api/auth/logout');
+});
+
+test('authentication protects both player assets and WebSocket upgrades', async t => {
+  const f = await browserFixture(t), client = accountClient(f);
+  await signup(client);
+  const start = await client.post('/api/session/start', { gameId: f.game.id });
+  assert.equal(start.status, 201, JSON.stringify(start.body));
+  assert.equal((await f.get(start.body.session.browserPlayerUrl)).status, 401);
+  await assert.rejects(f.connect(), error => error.status === 401);
+  assert.equal((await client.get(start.body.session.browserPlayerUrl)).status, 200);
+  const ws = await f.connect({ Cookie: client.cookie() });
+  assert.equal(ws.readyState, WebSocket.OPEN);
+  await client.post('/api/auth/logout');
+  await delay(50);
+  assert.equal(ws.readyState, WebSocket.CLOSED);
+});
+
+test('credentials are validated, requests are rate limited, and secure sites set secure login cookies', async t => {
+  const f = await fixture(t), client = accountClient(f);
+  assert.equal((await client.post('/api/auth/register', { username: 'x', password: 'tiny' })).status, 400);
+  assert.equal((await client.post('/api/auth/register', { username: 'valid_name', password: 'a-test-password-123', role: 'admin' })).status, 400);
+  const secure = createApp({ db: f.db, manager: f.manager, config: { ...config, tls: { cert: 'test', key: 'test' } } });
+  const response = await supertest(secure).post('/api/auth/register').set('Host', '127.0.0.1:3001').send({ username: 'secure_user', password: 'a-test-password-123' });
+  assert.match(response.headers['set-cookie'].find(x => x.startsWith('orbit_login=')), /Secure/);
+  for (let i = 0; i < 13; i++) await client.post('/api/auth/login', {});
+  assert.equal((await client.post('/api/auth/login', {})).status, 429);
+});
+
+test('history pagination is stable and login survives recreating the application', async t => {
+  const f = await fixture(t), client = accountClient(f);
+  const registered = await signup(client);
+  await f.db.session.createMany({ data: Array.from({ length: 25 }, (_, i) => ({ gameId: f.game.id, userId: registered.body.user.id, status: 'ENDED', durationSeconds: i + 1, endedAt: new Date() })) });
+  const first = (await client.get('/api/history')).body;
+  const second = (await client.get('/api/history?page=2')).body;
+  assert.equal(first.sessions.length, 20); assert.equal(second.sessions.length, 5);
+  assert.equal(first.total, 25); assert.equal(first.summary.durationSeconds, 325);
+  assert.ok(first.sessions.at(-1).id > second.sessions[0].id);
+  assert.equal(first.sessions[0].userId, undefined);
+  const freshApp = createApp({ db: f.db, manager: f.manager, config });
+  const restored = await supertest(freshApp).get('/api/auth/me').set('Host', '127.0.0.1:3001').set('Cookie', client.cookie());
+  assert.equal(restored.body.user.id, registered.body.user.id);
+});
+
+test('one account on two devices has independent games and logout affects only the current device', async t => {
+  const f = await multiFixture(t), first = accountClient(f), second = accountClient(f, 'b');
+  await signup(first);
+  await second.post('/api/auth/login', { username: 'player_one', password: 'a-test-password-123' });
+  const a = await first.post('/api/session/start', { gameId: f.games[0].id });
+  const b = await second.post('/api/session/start', { gameId: f.games[1].id });
+  assert.equal(a.status, 201); assert.equal(b.status, 201);
+  assert.equal((await first.get('/api/history')).body.total, 2);
+  assert.equal((await second.get('/api/history')).body.sessions.filter(row => row.isCurrentDevice).length, 1);
+  await first.post('/api/auth/logout');
+  assert.equal((await second.get('/api/session')).body.session.status, 'READY');
+  assert.ok((await second.get('/api/auth/me')).body.user);
+  assert.equal(await f.db.session.count({ where: { status: { in: LIVE } } }), 1);
+  await second.post('/api/auth/logout');
+});
+
+test('dashboard details require an admin and account requests cannot grant the role', async t => {
+  const f = await fixture(t), client = accountClient(f);
+  assert.equal((await f.get('/api/admin/host/status')).status, 401);
+  const escalated = await client.post('/api/auth/register', { username: 'role_player', password: 'a-test-password-123', isAdmin: true });
+  assert.equal(escalated.status, 400);
+  const registered = await signup(client, 'role_player');
+  assert.equal(registered.body.user.isAdmin, false);
+  assert.equal((await client.get('/api/admin/host/status')).status, 403);
+  const availability = (await client.get('/api/host/status')).body;
+  assert.equal(availability.system, undefined); assert.equal(availability.slots, undefined);
+  assert.equal(availability.available, true);
+  const start = await client.post('/api/session/start', { gameId: f.game.id });
+  assert.equal(start.status, 201, 'Player games remain available');
+  await client.post('/api/session/end');
+
+  const script = new URL('../scripts/user-role.js', import.meta.url);
+  const env = { ...process.env, DATABASE_URL: `file:${f.filename}` };
+  execFileSync(process.execPath, [script.pathname, 'ROLE_PLAYER', 'admin'], { env, stdio: 'pipe' });
+  assert.equal((await client.get('/api/auth/me')).body.user.isAdmin, true);
+  const dashboard = await client.get('/api/admin/host/status');
+  assert.equal(dashboard.status, 200);
+  assert.equal(dashboard.body.system.platform, 'Linux');
+  assert.ok(dashboard.body.system.memoryBytes > 0);
+  assert.equal(dashboard.body.slots.length, 1);
+  assert.equal(dashboard.body.slots[0].state, 'available');
+  assert.equal((await client.get('/api/host/status')).body.system, undefined);
+  execFileSync(process.execPath, [script.pathname, 'role_player', 'player'], { env, stdio: 'pipe' });
+  assert.equal((await client.get('/api/admin/host/status')).status, 403, 'Revocation takes effect on the existing login');
+  assert.equal((await client.get('/api/auth/me')).body.user.isAdmin, false);
+  assert.throws(() => execFileSync(process.execPath, [script.pathname, 'role_player', 'owner'], { env, stdio: 'pipe' }));
+  assert.equal((await f.db.user.findUnique({ where: { username: 'role_player' } })).isAdmin, false);
+  await f.db.user.update({ where: { id: registered.body.user.id }, data: { isAdmin: true } });
+  await f.db.authSession.updateMany({ data: { expiresAt: new Date(0) } });
+  assert.equal((await client.get('/api/admin/host/status')).status, 401);
 });

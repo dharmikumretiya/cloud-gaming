@@ -9,7 +9,7 @@ export function validateSite(req, config, requireOrigin = false) {
   const origin = req.headers.origin;
   if ((requireOrigin && !origin) || (origin && origin !== config.origin) || req.headers['sec-fetch-site'] === 'cross-site') throw new ApiError(403, 'ORIGIN_REJECTED', 'Use the configured website origin.');
 }
-export function createStreamProxy({ manager, config }) {
+export function createStreamProxy({ manager, config, auth }) {
   const router = express.Router();
   const proxies = new Map();
   const wsOrigin = config.origin.replace(/^http/, 'ws');
@@ -39,6 +39,7 @@ export function createStreamProxy({ manager, config }) {
     const ownerId = deviceOwner(req);
     if (!ownerId) throw new ApiError(403, 'DEVICE_REQUIRED', 'Open the game library in this browser first.');
     const session = await manager.current(ownerId);
+    if (session?.userId != null && (await auth.resolve(req))?.user.id !== session.userId) throw new ApiError(401, 'LOGIN_REQUIRED', 'Sign in to the account that started this game.');
     if (!session || !['READY', 'ACTIVE'].includes(session.status)) throw new ApiError(409, 'NO_SESSION', 'Start a game in this browser before opening the player.');
     const stream = manager.runtimeFor(session)?.stream;
     if (!stream?.running) throw new ApiError(503, 'STREAM_UNAVAILABLE', stream?.error || 'Your streaming display is not running.');

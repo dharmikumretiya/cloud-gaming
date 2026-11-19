@@ -4,6 +4,7 @@ import { backendRoot } from './config.js';
 import { ApiError } from './services/sessions.js';
 import { identifyDevice } from './device.js';
 import { createStreamProxy } from './stream-proxy.js';
+import { createAuth, requireAdmin } from './auth.js';
 
 export function createApp({ db, manager, config, stream = null }) {
   const app = express();
@@ -27,10 +28,13 @@ export function createApp({ db, manager, config, stream = null }) {
     next();
   });
   app.use('/api', identifyDevice(config));
-  const player = createStreamProxy({ manager, stream, config });
+  const auth = createAuth({ db, manager, config });
+  const player = createStreamProxy({ manager, stream, config, auth });
   app.streamUpgrade = player.upgrade;
   app.use('/streaming', player.router);
   app.use(express.json({ limit: '2kb' }));
+  app.use('/api', auth.middleware);
+  auth.routes(app);
   app.get('/api/health', async (req, res) => {
     await db.$queryRaw`SELECT 1`;
     res.json({ status: 'ok', database: 'ok' });
@@ -39,17 +43,23 @@ export function createApp({ db, manager, config, stream = null }) {
     const [games, host] = await Promise.all([db.game.findMany({ orderBy: { id: 'asc' } }), manager.hostStatus(req.ownerId)]);
     res.json({ games: games.map(game => ({ ...game, available: game.enabled && host.available && Boolean(host.launchers.find(x => x.gameId === game.id)?.ready) })) });
   });
-  app.get('/api/session', async (req, res) => res.json({ session: manager.present(await manager.current(req.ownerId)) }));
-  app.get('/api/host/status', async (req, res) => res.json(await manager.hostStatus(req.ownerId)));
+  app.get('/api/session', async (req, res) => res.json({ session: manager.present(await manager.current(req.ownerId, req.user?.id ?? null)) }));
+  app.get('/api/host/status', async (req, res) => {
+    const { system, slots, ...availability } = await manager.hostStatus(req.ownerId);
+    res.json(availability);
+  });
+  app.get('/api/admin/host/status', requireAdmin, async (req, res) => res.json(await manager.hostStatus(req.ownerId)));
   app.post('/api/session/start', async (req, res) => {
     if (!req.body || Object.keys(req.body).length !== 1 || !Number.isSafeInteger(req.body.gameId) || req.body.gameId < 1 || req.body.gameId > 2147483647) {
       throw new ApiError(400, 'INVALID_GAME_ID', 'Provide one positive integer gameId.');
     }
-    res.status(201).json({ session: manager.present(await manager.start(req.body.gameId, req.ownerId)) });
+    res.status(201).json({ session: manager.present(await manager.start(req.body.gameId, req.ownerId, req.user?.id ?? null, async () => {
+      if (req.user && (await auth.resolve(req))?.user.id !== req.user.id) throw new ApiError(401, 'LOGIN_REQUIRED', 'Your login expired. Sign in again.');
+    })) });
   });
-  app.post('/api/session/end', async (req, res) => res.json({ session: manager.present(await manager.end(req.ownerId)) }));
+  app.post('/api/session/end', async (req, res) => res.json({ session: manager.present(await manager.end(req.ownerId, req.user?.id ?? null)) }));
   app.post('/api/stream/reconnect', async (req, res) => {
-    await manager.reconnect(req.ownerId);
+    await manager.reconnect(req.ownerId, req.user?.id ?? null);
     res.json({ success: true });
   });
   app.use('/api', (req, res, next) => next(new ApiError(404, 'NOT_FOUND', 'API endpoint not found.')));

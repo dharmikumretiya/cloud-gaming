@@ -16,6 +16,7 @@
     "tls:generate": "node scripts/generate-tls.js",
     "db:setup": "npm run db:generate -w backend && npm run db:migrate -w backend && npm run db:seed -w backend",
     "test": "npm run test -w backend",
+    "user:role": "node backend/scripts/user-role.js",
     "stream:install": "node scripts/install-selkies.js",
     "games:install": "node scripts/install-games.js"
   },

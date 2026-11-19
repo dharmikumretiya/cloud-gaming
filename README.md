@@ -20,6 +20,18 @@ Keep an existing configured `.env` instead of replacing it. Open `SITE_ORIGIN`, 
 
 Click inside the player for keyboard/mouse and audio. The Selkies toolbar provides Gaming Mode, input, and audio controls. End Session disconnects the player, stops the owned game process group, and releases the host. Reconnect replaces the player connection while keeping the same game running.
 
+**Accounts:** use **Sign in → Create account** to choose a username, display name, and password (10–128 characters). Guest play remains available. Signed-in sessions appear under **History** on every device where you sign in, with pagination, session status, games played, and completed session time. Existing guest sessions are not assigned to an account. Each device still owns its own stream; signing out ends only that device’s game. End a guest game before creating or switching accounts. Password recovery is not included in this local prototype.
+
+**Admin dashboard:** new and existing accounts are players by default. Only admins see Dashboard and can retrieve detailed host/slot information. After creating your account, run the following on the host with Node 24; refresh the website afterward. Roles cannot be changed through registration or the browser API.
+
+```bash
+npm run user:role -- your_username admin
+# To remove admin access:
+npm run user:role -- your_username player
+```
+
+For an existing checkout, run `npm ci`, `npm run db:setup`, and `npm run build`, then restart the backend. The account migration preserves existing games and sessions. Passwords use salted asynchronous scrypt; opaque login tokens are hashed in SQLite, expire after 30 days, and are sent only in HttpOnly/SameSite cookies (Secure when HTTPS is configured). Login and registration are rate limited.
+
 ```bash
 npm test
 npm run build
@@ -31,7 +43,7 @@ Development: set `BIND_ADDRESS=127.0.0.1`, `SITE_ORIGIN=http://127.0.0.1:5173`, 
 
 - React + Vite + Tailwind: library, game details, and session with an embedded Selkies player.
 - Express: approved game launch/stop, database access, and a standard HTTP/WebSocket proxy to loopback Selkies.
-- Prisma + SQLite: the two application tables and partial unique indexes protecting each slot, device, and active title.
+- Prisma + SQLite: games, gaming sessions, users, and login sessions, with partial unique indexes protecting each slot, device, and active title.
 - Selkies: private Wayland compositor, capture, encoding, audio, browser playback, and input forwarding. The application does not implement a streaming engine.
 - One backend instance and one gaming host, with two independent gaming slots by default (configurable from 1 to 4). Each browser has one session; each title runs once at a time. The backend owns only the processes and connections it creates.
 
