@@ -1,0 +1,42 @@
+[
+  {
+    "name": "glew",
+    "url": "https://stable-mirror.omarchy.org/extra/os/x86_64/glew-2.3.1-1-x86_64.pkg.tar.zst",
+    "sha256": "4d7bf75e89fbd463b8164f3278f3f382b937f8948e1858d9fd691af526f463bc"
+  },
+  {
+    "name": "physfs",
+    "url": "https://stable-mirror.omarchy.org/extra/os/x86_64/physfs-3.2.0-5-x86_64.pkg.tar.zst",
+    "sha256": "d77772abfa899ceec8a42ced64ab4106ab3c4a116e31d00e4819024c21d0654f"
+  },
+  {
+    "name": "supertux",
+    "url": "https://stable-mirror.omarchy.org/extra/os/x86_64/supertux-0.7.0-1-x86_64.pkg.tar.zst",
+    "sha256": "8b46180fae59cc4ca88c737caba9df87638c226a6c9f44c0575749905d68529d"
+  },
+  {
+    "name": "fluidsynth",
+    "url": "https://stable-mirror.omarchy.org/extra/os/x86_64/fluidsynth-2.6.1-1-x86_64.pkg.tar.zst",
+    "sha256": "add22327a69befe12255960cab581b22e3c45353a30a170487357f0aaafb07f9"
+  },
+  {
+    "name": "openttd",
+    "url": "https://stable-mirror.omarchy.org/extra/os/x86_64/openttd-15.3-1-x86_64.pkg.tar.zst",
+    "sha256": "873073bf0cd38d7e590b8475c30d9aea2ac51b810819766a6a66ca8cca32b01b"
+  },
+  {
+    "name": "openttd-opengfx",
+    "url": "https://stable-mirror.omarchy.org/extra/os/x86_64/openttd-opengfx-8.0-1-any.pkg.tar.zst",
+    "sha256": "c8e390fba5bd3e053a10873e0e025bccb6b6c582ce19fe215c3846143ab809a1"
+  },
+  {
+    "name": "openttd-opensfx",
+    "url": "https://stable-mirror.omarchy.org/extra/os/x86_64/openttd-opensfx-1.0.3-2-any.pkg.tar.zst",
+    "sha256": "c4fd08d56f7488ca0658c296442d072b2d06b5c682ecb502636b8c1e8aad973c"
+  },
+  {
+    "name": "gnome-mahjongg",
+    "url": "https://stable-mirror.omarchy.org/extra/os/x86_64/gnome-mahjongg-51.1-1-x86_64.pkg.tar.zst",
+    "sha256": "9b92caf7f5e6c84532da988a9a7084006025f9275af7a9d76b538cf303c2a7a7"
+  }
+]

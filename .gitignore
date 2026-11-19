@@ -1,0 +1,9 @@
+node_modules/
+.env
+dist/
+*.db
+*.db-*
+*.db.lock/
+.runtime/
+coverage/
+backend/generated/
