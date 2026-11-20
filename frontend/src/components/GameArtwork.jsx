@@ -1,4 +1,5 @@
 const presentation = {
+  flare: { wide: '/images/flare.jpg', developer: 'Flare contributors', genre: 'Action RPG · Account saves', controller: false },
   mahjongg: { wide: '/images/mahjongg.png', cover: '/images/mahjongg-banner.png', developer: 'GNOME contributors', genre: 'Touch puzzle', controller: false, touch: true },
   supertuxkart: { wide: '/images/stk-world.jpg', cover: '/images/stk-cover.jpg', developer: 'SuperTuxKart Team', genre: 'Arcade racing', controller: true },
   xonotic: { wide: '/images/xonotic.jpg', developer: 'Team Xonotic', genre: 'Arena shooter', controller: false },

@@ -7,3 +7,5 @@ dist/
 .runtime/
 coverage/
 backend/generated/
+/output/
+/tmp/

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -19,7 +19,8 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { once } from 'node:events';
 import { LIVE, SessionManager } from '../src/services/sessions.js';
 
-const migration = (await readFile(new URL('../prisma/migrations/202611190001_initial/migration.sql', import.meta.url), 'utf8')) + (await readFile(new URL('../prisma/migrations/202611190002_multi_session/migration.sql', import.meta.url), 'utf8')) + (await readFile(new URL('../prisma/migrations/202611190003_accounts/migration.sql', import.meta.url), 'utf8')) + (await readFile(new URL('../prisma/migrations/202611200001_admin_access/migration.sql', import.meta.url), 'utf8'));
+const migrationsDir = new URL('../prisma/migrations/', import.meta.url);
+const migration = (await Promise.all((await readdir(migrationsDir)).filter(name => /^\d/.test(name)).sort().map(name => readFile(new URL(`${name}/migration.sql`, migrationsDir), 'utf8')))).join('\n');
 const config = loadConfig({ MAX_SESSIONS: '1' });
 function readyStream() {
   return { running: true, origin: 'http://127.0.0.1:1',
@@ -790,4 +791,56 @@ test('dashboard details require an admin and account requests cannot grant the r
   await f.db.user.update({ where: { id: registered.body.user.id }, data: { isAdmin: true } });
   await f.db.authSession.updateMany({ data: { expiresAt: new Date(0) } });
   assert.equal((await client.get('/api/admin/host/status')).status, 401);
+});
+
+test('native game profiles follow the account across devices and stay separate from other users and guests', async t => {
+  const { createGameRuntimes, playerProfile } = await import('../src/services/game-host.js');
+  const { mkdir, writeFile, access } = await import('node:fs/promises');
+  const dir = await mkdtemp(path.join(tmpdir(), 'orbit-profiles-'));
+  t.after(() => rm(dir, {recursive:true,force:true}));
+  const runtime=createGameRuntimes(config,{profileDirectory:dir})[0];
+  runtime.stream.gameEnvironment=()=>({WAYLAND_DISPLAY:'test-display'});
+  const a='a'.repeat(64), b='b'.repeat(64);
+  await runtime.prepare(a,11);
+  const env=runtime.gameEnvironment();
+  assert.equal(env.HOME,path.join(dir,'users/11'));
+  assert.equal(env.XDG_DATA_HOME,path.join(dir,'users/11/data'));
+  const saves=path.join(env.XDG_DATA_HOME,'flare/saves/empyrean');
+  await mkdir(saves,{recursive:true});
+  await writeFile(path.join(saves,'slot1.txt'),'name=Persistent hero\nlevel=3\n');
+  await writeFile(path.join(env.XDG_CONFIG_HOME,'flare/settings.txt'),'fullscreen=0\n');
+  await runtime.prepare(b,11);
+  assert.equal(runtime.profile,env.HOME);
+  assert.match(await readFile(path.join(runtime.profile,'data/flare/saves/empyrean/slot1.txt'),'utf8'),/Persistent hero/);
+  assert.equal(await readFile(path.join(runtime.profile,'config/flare/settings.txt'),'utf8'),'fullscreen=0\n');
+  const restored=createGameRuntimes(config,{profileDirectory:dir})[0];
+  await restored.prepare(b,11);
+  assert.equal(restored.profile,env.HOME);
+  await runtime.prepare(b,12);
+  await assert.rejects(access(path.join(runtime.profile,'data/flare/saves/empyrean/slot1.txt')));
+  await runtime.prepare(a);
+  assert.equal(runtime.profile,path.join(dir,'players',a));
+  await assert.rejects(access(path.join(runtime.profile,'data/flare/saves/empyrean/slot1.txt')));
+  assert.throws(()=>playerProfile(a,'../11',dir),/Invalid account/);
+  assert.throws(()=>playerProfile('../escape',11,dir),/Invalid device/);
+});
+
+test('Flare requires login and launches with the authenticated account rather than a requested user ID', async t => {
+  const f=await fixture(t), client=accountClient(f);
+  const flare=await f.db.game.create({data:{title:'Flare',launchId:'flare'}});
+  f.launcher.definitions.flare=f.launcher.definitions.test;
+  assert.equal((await client.post('/api/session/start',{gameId:flare.id})).status,401);
+  const user=(await signup(client,'native_player')).body.user;
+  let prepared;
+  f.manager.runtimes[0].prepare=async (ownerId,userId)=>{prepared={ownerId,userId};};
+  const result=await client.post('/api/session/start',{gameId:flare.id});
+  assert.equal(result.status,201);assert.equal(prepared.userId,user.id);
+  const firstOwner=prepared.ownerId;
+  await client.post('/api/session/end');
+  const second=accountClient(f,'b');
+  await second.post('/api/auth/login',{username:'native_player',password:'a-test-password-123'});
+  assert.equal((await second.post('/api/session/start',{gameId:flare.id,userId:999})).status,400);
+  assert.equal((await second.post('/api/session/start',{gameId:flare.id})).status,201);
+  assert.equal(prepared.userId,user.id);assert.notEqual(prepared.ownerId,firstOwner);
+  await second.post('/api/session/end');
 });

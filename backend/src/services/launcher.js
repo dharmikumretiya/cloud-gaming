@@ -8,9 +8,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 const gameRoot = fileURLToPath(new URL('../../../.runtime/games/', import.meta.url));
 const localRoot = path.join(gameRoot, 'root/usr');
 const localEnv = Object.freeze({ LD_LIBRARY_PATH: path.join(localRoot, 'lib') });
+const flareRoot = path.join(gameRoot, 'flare/squashfs-root');
 
 // Administrator-owned allowlist. API input can select a key, never a command.
 export function approvedGameDefinitions(profileRoot = gameRoot) { return Object.freeze({
+  flare: Object.freeze({ executable: path.join(flareRoot, 'usr/bin/flare'), args: [`--data-path=${path.join(flareRoot, 'usr/share/flare')}`], env: { LD_LIBRARY_PATH: `/usr/lib:${path.join(flareRoot, 'lib/x86_64-linux-gnu')}:${path.join(flareRoot, 'usr/lib/x86_64-linux-gnu')}` } }),
   mahjongg: Object.freeze({ executable: path.join(localRoot, 'bin/gnome-mahjongg'), args: [], env: { ...localEnv, GSETTINGS_BACKEND: 'keyfile', GSETTINGS_SCHEMA_DIR: path.join(localRoot, 'share/glib-2.0/schemas'), XDG_DATA_DIRS: `${localRoot}/share:/usr/local/share:/usr/share`, GSK_RENDERER: 'cairo' } }),
   supertuxkart: Object.freeze({ executable: '/usr/bin/supertuxkart', args: [] }),
   xonotic: Object.freeze({ executable: '/usr/bin/xonotic-sdl', args: ['-userdir', path.join(profileRoot, 'xonotic'), '+vid_fullscreen', '1', '+vid_width', '1280', '+vid_height', '720'] }),

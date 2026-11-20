@@ -68,6 +68,7 @@ export class SessionManager {
     const game = await this.db.game.findUnique({ where: { id: gameId } });
     if (!game) throw new ApiError(404, 'GAME_NOT_FOUND', 'Game not found.');
     if (!game.enabled) throw new ApiError(409, 'GAME_DISABLED', 'This game is disabled.');
+    if (game.launchId === 'flare' && userId === null) throw new ApiError(401, 'LOGIN_REQUIRED', 'Sign in to play Flare and keep your character saves with your account.');
     const sessions = await this.db.session.findMany({ where: { status: { in: LIVE } } });
     if (sessions.some(session => session.ownerId === ownerId)) throw new ApiError(409, 'DEVICE_BUSY', 'This browser already has a game. Return to your session or end it first.');
     if (sessions.some(session => session.gameId === gameId)) throw new ApiError(409, 'GAME_BUSY', 'This game is already being played. Choose another title.');
@@ -97,7 +98,7 @@ export class SessionManager {
       throw error;
     }
     try {
-      await runtime.prepare?.(ownerId);
+      await runtime.prepare?.(ownerId, userId);
       await runtime.launcher.launch(game.launchId, code => {
         this.serialize(async () => {
           const row = await this.db.session.findUnique({ where: { id: session.id } });

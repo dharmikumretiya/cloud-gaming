@@ -63,7 +63,7 @@ export class Selkies {
         '--subfolder=/streaming', '--mode=websockets', '--enable-dual-mode=false', '--manual-width=1280', '--manual-height=720',
         '--framerate=60', '--enable-resize=false', '--file-transfers=none', '--enable-clipboard=false', '--command-enabled=false',
         '--enable-sharing=false', '--printing-enabled=false', '--microphone-enabled=false', '--webcam-enabled=false',
-        '--ui-title=Orbit', '--ui-show-logo=false', '--ui-sidebar-show-files=false', '--ui-sidebar-show-apps=false',
+        '--ui-title=Cloud Gaming', '--ui-show-logo=false', '--ui-sidebar-show-files=false', '--ui-sidebar-show-apps=false',
         '--ui-sidebar-show-sharing=false', '--ui-sidebar-show-clipboard=false'];
       const log = await open(path.join(this.directory, 'server.log'), 'a', 0o600);
       try { this.child = spawn('/usr/bin/dbus-run-session', ['--', process.execPath, path.join(backendRoot, 'src/services/stream-entry.js'), executable, ...args], { env, detached: true, stdio: ['ignore', log.fd, log.fd] }); }

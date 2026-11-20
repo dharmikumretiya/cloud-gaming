@@ -14,7 +14,7 @@ for (const file of [cert, key]) {
 const names = ['DNS:localhost', 'IP:127.0.0.1'];
 if (bindAddress !== 'localhost' && bindAddress !== '127.0.0.1') names.push(`IP:${bindAddress}`);
 execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-noenc', '-days', '30',
-  '-keyout', key, '-out', cert, '-subj', '/CN=Orbit LAN', '-addext', `subjectAltName=${names.join(',')}`], { stdio: 'pipe' });
+  '-keyout', key, '-out', cert, '-subj', '/CN=Cloud Gaming LAN', '-addext', `subjectAltName=${names.join(',')}`], { stdio: 'pipe' });
 await chmod(key, 0o600);
 console.log(`Created local demo certificate: ${cert}\nReview its SHA-256 fingerprint with: openssl x509 -in ${cert} -noout -fingerprint -sha256`);
 console.log(`To enable it, set these in .env:\nTLS_CERT_PATH=../.runtime/tls/cert.pem\nTLS_KEY_PATH=../.runtime/tls/key.pem\nSITE_ORIGIN=https://${bindAddress}:${port}\nRestart the backend. Each client must trust this certificate manually; no system trust settings were changed.`);

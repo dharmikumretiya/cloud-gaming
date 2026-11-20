@@ -13,8 +13,9 @@ const GamingContext = createContext(null);
 export const useGaming = () => useContext(GamingContext);
 export const isLive = session => ['STARTING', 'READY', 'ACTIVE'].includes(session?.status);
 export function PlayButton({ game, className = '' }) {
-  const { host, session, busy, start, fresh } = useGaming();
+  const { host, session, user, busy, start, fresh } = useGaming();
   const navigate = useNavigate();
+  if (game?.launchId === 'flare' && !user) return <Link className={`button ${className}`} to="/account"><UserRound size={17}/>Sign in to play</Link>;
   if (isLive(session)) return <Link className={`button ${className}`} to="/session"><Gamepad2 size={17} />Return to session</Link>;
   const ready = game?.enabled && fresh && host?.available && host.launchers.some(x => x.gameId === game.id && x.ready);
   return <button className={`button ${className}`} disabled={!ready || busy} onClick={async () => { if (await start(game.id)) navigate('/session'); }}>

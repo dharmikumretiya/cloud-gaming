@@ -64,7 +64,7 @@ export default function BrowserPlayer({ session }) {
     } catch (error) { setState('ERROR'); setMessage(error.message); }
     finally { setReconnecting(false); }
   }
-  if (!window.isSecureContext) return <section className="panel browser-player" aria-label="Secure connection required"><div className="player-help"><h2>Open Orbit over HTTPS</h2><p>Your browser requires a secure connection to stream games from another device.</p><p><a className="button" href={`https://${window.location.host}/session`}>Open secure session</a></p><p>The host must have HTTPS configured. A local certificate may need to be trusted on this device.</p></div></section>;
+  if (!window.isSecureContext) return <section className="panel browser-player" aria-label="Secure connection required"><div className="player-help"><h2>Open the game over HTTPS</h2><p>Your browser requires a secure connection to stream games from another device.</p><p><a className="button" href={`https://${window.location.host}/session`}>Open secure session</a></p><p>The host must have HTTPS configured. A local certificate may need to be trusted on this device.</p></div></section>;
   return <section className="panel browser-player" aria-label="Browser game player">
     <div className="player-toolbar"><div role="status">{state === 'CONNECTING' ? <LoaderCircle size={16} className="spin"/> : <Radio size={16}/>}<span>{labels[state]}</span></div><div className="player-tools">
       <button className="player-control" aria-label="Game sound" aria-pressed={sound} onClick={toggleSound}>{sound ? <Volume2 size={18}/> : <VolumeX size={18}/>}<span>Sound {sound ? 'on' : 'off'}</span></button>

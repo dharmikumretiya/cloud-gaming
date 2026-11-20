@@ -1,4 +1,4 @@
-# Orbit — Browser Cloud Gaming
+# Browser Cloud Gaming
 
 Open the website, choose a game, and play in the browser. Each player gets a dedicated private Linux display and audio server. **Selkies 2.2.1 supplies the streaming server and browser client**; React, Express, SQLite, and Prisma manage the library, game process, and device-owned gaming slots.
 
@@ -21,6 +21,12 @@ Keep an existing configured `.env` instead of replacing it. Open `SITE_ORIGIN`, 
 Click inside the player for keyboard/mouse and audio. The Selkies toolbar provides Gaming Mode, input, and audio controls. End Session disconnects the player, stops the owned game process group, and releases the host. Reconnect replaces the player connection while keeping the same game running.
 
 **Accounts:** use **Sign in → Create account** to choose a username, display name, and password (10–128 characters). Guest play remains available. Signed-in sessions appear under **History** on every device where you sign in, with pagination, session status, games played, and completed session time. Existing guest sessions are not assigned to an account. Each device still owns its own stream; signing out ends only that device’s game. End a guest game before creating or switching accounts. Password recovery is not included in this local prototype.
+
+**Native game saves:** signed-in games now use `.runtime/users/<userId>/` for settings and saves, independent of the browser or streaming slot. Guest profiles remain under `.runtime/players/<deviceHash>/`; old guest saves are not automatically claimed by an account. Back up `.runtime/users/` together with the database. Games control when they write saves; stopping a process is not a universal save operation.
+
+**Flare: Empyrean Campaign** is the downloaded native RPG used for the save demo. `npm run games:install` downloads its official 1.15 Linux AppImage, verifies the pinned SHA-256, and extracts it locally. Sign in, launch Flare, create a character, play, then use **Save & Exit** in the game's menu before End Session. Sign in with the same account on another device, launch Flare, and select that character. A different account has its own character list. Saves live under `.runtime/users/<userId>/data/flare/saves/`. The custom 2048 implementation has been removed.
+
+Flare source and licensing: [official release](https://github.com/flareteam/flare-game/releases/tag/v1.15), [project](https://flarerpg.org/). Engine GPL-3.0-or-later; Empyrean Campaign artwork/data CC-BY-SA-3.0 (or later). The bundled library artwork `frontend/public/images/flare.jpg` is the unmodified dungeon menu background from Flare, © Clint Bellanger and contributors.
 
 **Admin dashboard:** new and existing accounts are players by default. Only admins see Dashboard and can retrieve detailed host/slot information. After creating your account, run the following on the host with Node 24; refresh the website afterward. Roles cannot be changed through registration or the browser API.
 

@@ -16,7 +16,7 @@ let shuttingDown = false;
 async function shutdown(code = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log('Shutting down Orbit; cleaning up any owned game.');
+  console.log('Shutting down Cloud Gaming; cleaning up any owned game.');
   server?.close();
   // Do not hang indefinitely on a broken driver or shutdown request.
   const deadline = setTimeout(() => process.exit(1), 30000);
@@ -41,7 +41,7 @@ try {
   server = config.tls ? https.createServer({ cert: await readFile(config.tls.cert), key: await readFile(config.tls.key) }, app) : http.createServer(app);
   server.on('upgrade', app.streamUpgrade);
   server.listen(config.port, config.bindAddress, () => {
-    console.log(`Orbit running at ${config.tls ? 'https' : 'http'}://${config.bindAddress}:${config.port}`);
+    console.log(`Cloud Gaming running at ${config.tls ? 'https' : 'http'}://${config.bindAddress}:${config.port}`);
     console.log(`Host supports ${runtimes.length} separate gaming sessions; one game per browser and one player per title.`);
   });
   server.on('error', error => { console.error(error.message); shutdown(1); });
